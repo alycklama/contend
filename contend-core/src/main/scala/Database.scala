@@ -18,8 +18,6 @@ class Database()(implicit config: Config) {
     connectionString,
     AuthTokens.basic(username, password)
   );
-  //val file = new File(config.getString("neo4j.directory"))
-  //new GraphDatabaseFactory().newEmbeddedDatabase(file);
 
   def execute(cypher: String, parameters: Map[String, AnyRef] = Map.empty): Try[StatementResult] = Try {
     val session = driver.session()
