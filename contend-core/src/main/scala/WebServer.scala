@@ -2,15 +2,13 @@ package org.contend.core
 
 import akka.actor.ActorSystem
 import akka.http.scaladsl.Http
-import akka.http.scaladsl.server.Directives._
 import akka.http.scaladsl.model.{ContentTypes, HttpEntity}
+import akka.http.scaladsl.server._
 import akka.stream.ActorMaterializer
 import com.typesafe.config.ConfigFactory
 import org.fusesource.scalate.TemplateEngine
-import org.neo4j.driver.v1.StatementResult
 
 import scala.io.StdIn
-import scala.util.{Failure, Success, Try}
 
 trait WebServer {
   implicit val system = ActorSystem("actor-system")
@@ -32,29 +30,17 @@ trait WebServer {
     database.close
   })
 
-  def main(args: Array[String]) {
-    val route =
-      path("blog" / "articles") {
-        get {
-          val results = database.execute("MATCH (n) RETURN COUNT(n);")
+  init()
 
-          results match {
-            case Failure(e) =>
-              complete {
-                Try(errorHandler(e))
-              }
-            case Success(result) => complete {
-              Try {
-                val template = getClass().getResource("templates/articles.scaml")
-                val html = engine.layout(template.getFile, Map[String, StatementResult]("result" -> result))
-                HttpEntity(ContentTypes.`text/html(UTF-8)`, html)
-              }.recover {
-                errorHandler
-              }
-            }
-          }
-        }
-      }
+  /**
+    * Override to add any required initialization
+    */
+  def init(): Unit = {}
+
+  def routes: Route
+
+  def main(args: Array[String]) {
+    val route = routes
 
     val bindingFuture = Http().bindAndHandle(route, "localhost", 8080)
 
