@@ -1,7 +1,7 @@
 package org.contend.core
 
 import com.typesafe.config.Config
-import org.neo4j.driver.v1.{AuthTokens, GraphDatabase, StatementResult}
+import org.neo4j.driver.v1.{AuthTokens, GraphDatabase, Record, StatementResult}
 
 import scala.collection.JavaConverters._
 import scala.util.Try
@@ -19,11 +19,11 @@ class Database()(implicit config: Config) {
     AuthTokens.basic(username, password)
   );
 
-  def execute(cypher: String, parameters: Map[String, AnyRef] = Map.empty): Try[StatementResult] = Try {
+  def execute(cypher: String, parameters: Map[String, AnyRef] = Map.empty): Try[Iterator[Record]] = Try {
     val session = driver.session()
     val results = session.run(cypher, parameters.asJava);
     session.close()
-    results
+    results.asScala
   }
 
   def close: Unit = {
