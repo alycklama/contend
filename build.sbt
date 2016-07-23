@@ -23,7 +23,9 @@ lazy val core = project.in(file("contend-core"))
     libraryDependencies += "org.neo4j.driver" % "neo4j-java-driver" % "1.0.4",
 
     libraryDependencies += "org.scalatra.scalate" % "scalate-core_2.11" % "1.7.1",
-    libraryDependencies += "org.scala-lang" % "scala-compiler" % "2.11.8"
+    libraryDependencies += "org.scala-lang" % "scala-compiler" % "2.11.8",
+
+    libraryDependencies += "org.scalaz" % "scalaz-core_2.11" % "7.2.4"
 )
 
 lazy val blog = project.in(file("samples/blog"))
