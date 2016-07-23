@@ -1,7 +1,7 @@
--@ val articles: scala.Iterator[org.neo4j.driver.v1.Value]
+-@ val content: scala.Iterator[org.neo4j.driver.v1.Value]
 
 %h1 Articles
 
-- for (article <- articles)
-  %h2 = article.get("name")
-  %code = article.get("date")
+- for (article <- content)
+    %h2 = article.get("name")
+    %code = article.get("date")

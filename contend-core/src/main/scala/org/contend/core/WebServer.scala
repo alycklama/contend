@@ -8,13 +8,21 @@ import akka.http.scaladsl.model._
 import akka.http.scaladsl.server._
 import akka.stream.ActorMaterializer
 import com.typesafe.config.ConfigFactory
+import org.contend.core.WebServer.{CypherQuery, TemplateLocation}
 import org.fusesource.scalate.TemplateEngine
-import org.neo4j.driver.v1.Record
+import org.neo4j.driver.v1.{Record, Value}
 
 import scala.io.StdIn
 import scala.util.Try
+import scalaz.{-\/, \/, \/-}
+
+object WebServer {
+  type CypherQuery = String
+  type TemplateLocation = String
+}
 
 trait WebServer {
+
   implicit val system = ActorSystem("actor-system")
   implicit val materializer = ActorMaterializer()
   implicit val executionContext = system.dispatcher
@@ -31,12 +39,43 @@ trait WebServer {
       }
   }
 
-  implicit val templateHandler: PartialFunction[String, URL] = {
+  implicit val templateHandler: PartialFunction[TemplateLocation, URL] = {
     case path => {
       val template = this.getClass().getClassLoader.getResource(path)
       if (template == null)
         throw new TemplateNotFoundException(s"template not found: ${path}")
       template
+    }
+  }
+
+  implicit val contentHandler: PartialFunction[(CypherQuery, TemplateLocation, Seq[String]), HttpResponse] = {
+    case (cypherQuery, templateLocation, mapper) => {
+      database.execute(cypherQuery)
+        .map(
+          records => {
+            def mapContent: \/[Iterator[Value], Iterator[Seq[Value]]] = {
+              mapper match {
+                case seq if seq.length == 1 =>
+                  -\/(records.map(record => record.get(mapper.head)))
+                case seq =>
+                  \/-(records.map(record => {
+                    mapper.map(key => record.get(key))
+                  }))
+              }
+            }
+
+            val html = engine.layout(
+              templateHandler(templateLocation).getFile,
+              mapContent match {
+                case -\/(result) => Map[String, Iterator[Value]]("content" -> result)
+                case \/-(result) => Map[String, Iterator[Seq[Value]]]("content" -> result)
+              }
+            )
+            HttpResponse(StatusCodes.OK, entity = HttpEntity(ContentTypes.`text/html(UTF-8)`, html))
+          }
+        ).recoverWith[HttpResponse] {
+          errorHandler
+        }.get
     }
   }
 
