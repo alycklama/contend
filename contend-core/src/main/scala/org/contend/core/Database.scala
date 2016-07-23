@@ -1,7 +1,7 @@
 package org.contend.core
 
 import com.typesafe.config.Config
-import org.neo4j.driver.v1.{AuthTokens, GraphDatabase, Record, StatementResult}
+import org.neo4j.driver.v1.{AuthTokens, GraphDatabase, Record}
 
 import scala.collection.JavaConverters._
 import scala.util.Try
