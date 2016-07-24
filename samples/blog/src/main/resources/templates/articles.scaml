@@ -1,7 +1,9 @@
--@ val content: scala.Iterator[org.neo4j.driver.v1.Value]
+-@ val content: scala.Iterator[Tuple2[org.neo4j.driver.v1.Value, org.neo4j.driver.v1.Value]]
 
 %h1 Articles
 
-- for (article <- content)
-    %h2 = article.get("name")
+- for ((article, route) <- content)
+  %div
+    %a{:href => { route.get("path").asString }}
+      %h2 = article.get("name")
     %code = article.get("date")

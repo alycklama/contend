@@ -1,20 +1,19 @@
 package org.contend.core
 
-import java.net.URL
-
 import akka.actor.ActorSystem
 import akka.http.scaladsl.Http
-import akka.http.scaladsl.model._
+import akka.http.scaladsl.model.{HttpEntity, _}
+import akka.http.scaladsl.server.Directives._
 import akka.http.scaladsl.server._
 import akka.stream.ActorMaterializer
 import com.typesafe.config.ConfigFactory
 import org.contend.core.WebServer.{CypherQuery, TemplateLocation}
 import org.fusesource.scalate.TemplateEngine
+import org.neo4j.driver.internal.value.NodeValue
 import org.neo4j.driver.v1.{Record, Value}
 
 import scala.io.StdIn
 import scala.util.Try
-import scalaz.{-\/, \/, \/-}
 
 object WebServer {
   type CypherQuery = String
@@ -22,7 +21,6 @@ object WebServer {
 }
 
 trait WebServer {
-
   implicit val system = ActorSystem("actor-system")
   implicit val materializer = ActorMaterializer()
   implicit val executionContext = system.dispatcher
@@ -33,49 +31,54 @@ trait WebServer {
   implicit val errorHandler: PartialFunction[Throwable, Try[HttpResponse]] = {
     case e =>
       Try {
-        val template = this.getClass().getClassLoader.getResource("templates/error.scaml")
-        val html = engine.layout(template.getFile, Map("exception" -> e))
+        val html = templateHandler("templates/error.scaml", e)
         HttpResponse(StatusCodes.InternalServerError, entity = (HttpEntity(ContentTypes.`text/html(UTF-8)`, html)))
       }
   }
 
-  implicit val templateHandler: PartialFunction[TemplateLocation, URL] = {
-    case path => {
+  implicit val templateHandler: PartialFunction[(TemplateLocation, Any), String] = {
+    case (path, content) => {
       val template = this.getClass().getClassLoader.getResource(path)
       if (template == null)
         throw new TemplateNotFoundException(s"template not found: ${path}")
-      template
+
+      engine.layout(
+        template.getFile,
+        Map[String, Any]("content" -> content)
+      )
     }
   }
 
-  implicit val contentHandler: PartialFunction[(CypherQuery, TemplateLocation, Seq[String]), HttpResponse] = {
+  implicit val cypherQueryHandler: PartialFunction[(CypherQuery, TemplateLocation, Seq[String]), HttpResponse] = {
     case (cypherQuery, templateLocation, mapper) => {
-      database.execute(cypherQuery)
+      contentHandler(database.execute(cypherQuery), templateLocation, mapper)
+    }
+  }
+
+  implicit val contentHandler: PartialFunction[(Try[Iterator[Record]], TemplateLocation, Seq[String]), HttpResponse] = {
+    case (content, templateLocation, mapper) => {
+      content
         .map(
           records => {
-            def mapContent: \/[Iterator[Value], Iterator[Seq[Value]]] = {
-              mapper match {
-                case seq if seq.length == 1 =>
-                  -\/(records.map(record => record.get(mapper.head)))
-                case seq =>
-                  \/-(records.map(record => {
-                    mapper.map(key => record.get(key))
-                  }))
-              }
+            // Transform a list of return values to a single tupleN
+            def mapContent: (Iterator[_]) = {
+              records.map(record => {
+                // There is some weird behavior when returning a Tuple1, not being able to use get(key) on the object.
+                // As a workaround the object itself will be returned if the mapper only has a single value
+                if (mapper.size == 1) {
+                  record.get(mapper.head)
+                } else {
+                  Tuples.toTuple(mapper.map(key => record.get(key)))
+                }
+              })
             }
 
-            val html = engine.layout(
-              templateHandler(templateLocation).getFile,
-              mapContent match {
-                case -\/(result) => Map[String, Iterator[Value]]("content" -> result)
-                case \/-(result) => Map[String, Iterator[Seq[Value]]]("content" -> result)
-              }
-            )
+            val html = templateHandler(templateLocation, mapContent)
             HttpResponse(StatusCodes.OK, entity = HttpEntity(ContentTypes.`text/html(UTF-8)`, html))
           }
         ).recoverWith[HttpResponse] {
-          errorHandler
-        }.get
+        errorHandler
+      }.get
     }
   }
 
@@ -85,23 +88,54 @@ trait WebServer {
 
   init()
 
-  def getRouteContent(path: Uri.Path): Try[Iterator[Record]] = {
-    val query = s"""MATCH (r:Route { path: "${path.toString()}"})-[:CONTENT]->(c) RETURN c"""
-    database.execute(query)
-  }
+//  def getRouteContent(path: Uri.Path): Option[(Record, Record)] = {
+//    val query = s"""MATCH (r:Route { path: "${path.toString()}"})-[:CONTENT]->(c) RETURN c, r"""
+//    database.execute(query).map(iterator => {
+//      if (iterator.isEmpty) {
+//        None
+//      } else if (iterator.size == 2) {
+//        Some(iterator.next(), iterator.next())
+//      }
+//      else {
+//        throw new Exception("Multiple nodes")
+//      }
+//    }).get
+//  }
 
-//  def routesHandler: Flow[HttpRequest, HttpResponse, Any] = {
+//  def dynamicRoutesHandler: Flow[HttpRequest, HttpResponse, Any] = {
 //    Flow.fromFunction[HttpRequest, HttpResponse](
 //      request => {
 //        // val path = request.uri.path.toString()
 //        getRouteContent(request.uri.path)
 //          .map(f => HttpResponse(StatusCodes.OK, entity = HttpEntity(ContentType(MediaTypes.`text/html`, HttpCharsets.`UTF-8`), s"Route: ${request.uri.path}")))
-//          .recover {
-//            case ex =>
-//              HttpResponse(StatusCodes.InternalServerError, entity = errorHandler(ex))
+//          .recoverWith {
+//            errorHandler
 //          }.get
 //      }
 //    )
+//  }
+
+//  def dynamicRoutesHandler: Route = {
+//    context => {
+//      val request = context.request
+//      context.complete {
+//        getRouteContent(request.uri.path)
+//          .map(f =>
+//            f match {
+//              case iterator: Iterator[_] if iterator.isEmpty =>
+//                val html = templateHandler("templates/404.scaml", context)
+//                val content = HttpEntity(ContentType(MediaTypes.`text/html`, HttpCharsets.`UTF-8`), html)
+//                HttpResponse(StatusCodes.NotFound, entity = content)
+//              case _ =>
+//                val content = HttpEntity(ContentType(MediaTypes.`text/html`, HttpCharsets.`UTF-8`), s"Dynamic Route: ${request.uri.path}")
+//                HttpResponse(StatusCodes.OK, entity = content)
+//            }
+//          )
+//          .recoverWith {
+//            errorHandler
+//          }.get
+//      }
+//    }
 //  }
 
   /**
@@ -109,12 +143,12 @@ trait WebServer {
     */
   def init(): Unit = {}
 
-  def routes: Route
+  def staticRoutes: Route
 
   def main(args: Array[String]) {
-    val route = routes
+    val route = staticRoutes
 
-    val bindingFuture = Http().bindAndHandle(routes, "localhost", 8080)
+    val bindingFuture = Http().bindAndHandle(staticRoutes, "localhost", 8080)
 
     println(s"Server online at http://localhost:8080/\nPress RETURN to stop...")
     StdIn.readLine() // let it run until user presses return
